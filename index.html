@@ -1,0 +1,189 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8" />
+	<title>Photo Editor</title>
+	<script>
+		// 影像編輯功能
+		var ctx;
+		//HTML DOM Ready,觸發 load 事件
+		window.onload = function () {
+			ctx = document.getElementById("cvs").getContext("2d"); // 取得 canvas 相對應的 context 物件
+			// 載入圖片
+			loadImage("");
+		};
+
+		function loadImage(src) {
+			var img = new Image(); // <img/>
+			img.src = src;
+			//跨網域 canvas
+			img.crossOrigin = "Anonymous";
+			img.onload = function () {
+				// 確定圖檔載入完成之後，才畫進 canvas 裡面
+				ctx.drawImage(this, 0, 0, ctx.canvas.width, ctx.canvas.height);
+			};
+		};
+
+		function loadFile(input) {
+			let file = input.files[0];
+			//取得檔案物件的網址，網址直接指到檔案內容
+			let src = URL.createObjectURL(file);
+			console.log(src);
+			loadImage(src);
+		};
+
+		function createPicker() {
+			let input = document.querySelector("#file");
+			input.click();
+		};
+
+		function downloadFile() {
+			ctx.canvas.toBlob(function (blob) {
+				//Blob 物件:在 Javascript 中儲存()非文字資料
+				//將 canvas 的資料轉換成 Blob 物件，在這裡取得並繼續工作
+				let src = URL.createObjectURL(blob);
+				//觸發下載程序
+				let link = document.querySelector("#download-link");
+				link.href = src;
+				link.download = "landscape.png";
+				link.click();
+			}, "image/jpeg");
+		};
+
+		function invert() {
+			// 取得像素資料
+			var pixels = ctx.getImageData(0, 0, 600, 450);
+			// 以像素為單位處理資料
+			for (var i = 0; i < pixels.data.length; i += 4) {
+				pixels.data[i] = 255 - pixels.data[i]; // r
+				pixels.data[i + 1] = 255 - pixels.data[i + 1]; // g
+				pixels.data[i + 2] = 255 - pixels.data[i + 2]; // b
+			}
+			// 把處理完的像素資料放回 canvas 裡面
+			ctx.putImageData(pixels, 0, 0);
+		};
+		/*==================== Google Drive API ========================*/
+
+		function openFile() {
+			if (auth.isSignedIn.get()) { //使用者已授權，打開檔案選擇器
+				// 使用 Google Picker 建立雲端檔案選擇器
+				creatPicker();
+			} else { //未授權
+				auth.signIn();
+			}
+		};
+		//Google 相關的處理
+		const CLIENT_ID = '793453150046-5na27irraliv5jhpqkq854p318r3rad9.apps.googleusercontent.com';
+		const API_KEY = 'AIzaSyAb-YYWh32HlFuFC8Qw1QFKmlrMV7SKdAQ';
+		const SCOPES = "https://www.googleapis.com/auth/drive";
+		let auth = null;
+
+		function creatPicker() {
+			var view = new google.picker.View(google.picker.ViewId.DOCS);
+			view.setMimeTypes("image/png,image/jpeg,image/jpg");
+			var picker = new google.picker.PickerBuilder()
+				//.enableFeature(google.picker.Feature.NAV_HIDDEN)
+				.enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+				.setAppId("793453150046")
+				.setOAuthToken(auth.currentUser.get().getAuthResponse().access_token)
+				.addView(view)
+				.addView(new google.picker.DocsUploadView())
+				.setDeveloperKey(API_KEY)
+				.setCallback(pickerCallback)
+				.build();
+			picker.setVisible(true);
+		};
+		let fileId;
+
+		function pickerCallback(data) {
+			//使用者選擇一個檔案
+			if (data.action == google.picker.Action.PICKED) {
+				fileId = data.docs[0].id;
+				//alert('The user selected: ' + fileId);
+				downloadFile(fileId);
+			}
+		};
+
+		function downloadFile(fileId) {
+			let token = auth.currentUser.get().getAuthResponse().access_token;
+			let src = `https://www.googleapis.com/drive/v3/files/${fileId}?access_token=${token}&alt=media`;
+			loadImage(src);
+		};
+
+		function initGoogleAPI() {
+			// 載入 client:auth2 呼叫 initGoogleAPI()
+			gapi.load("client:auth2", initGoogleClient);
+			//載入 picker 套件
+			gapi.load("picker");
+		};
+
+		function initGoogleClient() {
+			//初始化套件(驗證使用者是否授權)
+			gapi.client.init({
+				apiKey: API_KEY,
+				clientId: CLIENT_ID,
+				scope: SCOPES //授權的範圍
+			}).then(function () {
+				auth = gapi.auth2.getAuthInstance();
+				//console.log("auth object", auth);
+				//console.log("result", auth.isSignedIn.get());
+			});
+		};
+
+		function saveFile() {
+			// 取得畫布的資料，使用 base64 編碼成字串
+			let data = ctx.canvas.toDataURL("image/jpeg");
+			// 刪掉多餘字串
+			data = data.replace("data:image/jpeg;base64,", "");
+			// console.log(data);
+			updateFile(data);
+		};
+
+		function updateFile(data) {
+			let token = auth.currentUser.get().getAuthResponse().access_token;
+			let boundary = "foo_bar_baz"
+			// 準備主內容(\r\n : 換行   json 格式裡面一定要用")
+			let body =
+				`--${boundary}\r\n
+				Content-Type: application/json; charset=UTF-8\r\n\r\n
+				{name:image.jpg}\r\n\r\n
+				--${boundary}\r\n
+				Content-Type: image/jpeg\r\n
+				Content-Transfer-Encoding: base64\r\n\r\n
+				data\r\n
+				--${boundary}--`;
+			// 發送連線到 Google，並且把檔案上傳
+			let req = new XMLHttpRequest();
+			//HTTP 基本資訊:方法和網址
+			req.open("PATCH", "https://www.googleapis.com/upload/drive/v3/files/" + fileId + "?uploadType=multipart");
+			req.onload = function () {
+				alert("Uploaded");
+			};
+			req.setRequestHeader("Authorization", "Bearer " + token);
+			req.setRequestHeader("Content-Type", "multipart/related; boundary=" + boundary);
+			// HTTP 主內容 (Body)
+			req.send(body);
+		};
+		/*==================== Google Drive API ========================*/
+		//rest api :一個網址，一個功能
+	</script>
+	<script async defer src="https://apis.google.com/js/api.js" onload="this.onload=function(){};initGoogleAPI()" onreadystatechange="if (this.readyState === 'complete') this.onload()">
+	</script>
+</head>
+
+<body>
+	<div>
+		<button onclick="openFile();">Open From Drive</button>
+		<button onclick="createPicker();">Open File</button>
+		<input style="display:none;" id="file" type="file" onchange="loadFile(this);">
+		<button onclick="invert();">Invert</button>
+		<button onclick="downloadFile();">Download File</button>
+		<button onclick="saveFile();">Save File to Drive</button>
+		<!-- download 屬性觸發下載動作(不支援網址) -->
+		<a id="download-link"></a>
+	</div>
+	<canvas id="cvs" width="600" height="450" style="border:1px solid black"></canvas>
+</body>
+
+</html>
